@@ -116,6 +116,29 @@ def process_silver_attributes(snapshot_date_str, bronze_features_dir, silver_fea
     return df
 
 
+# 0 Customer_ID               12500 non-null  object 
+#  1   Annual_Income             12500 non-null  object -> remove underscore
+#  2   Monthly_Inhand_Salary     12500 non-null  float64 
+#  3   Num_Bank_Accounts         12500 non-null  int64 -> remove high bank accounts, remove negative 
+#  4   Num_Credit_Card           12500 non-null  int64  -> remove high credit cards
+#  5   Interest_Rate             12500 non-null  int64  -> remove interest rate greater than 100
+#  6   Num_of_Loan               12500 non-null  object -> remove underscore, remove negative, remove high num of loan
+#  7   Type_of_Loan              11074 non-null  object -> 
+#  8   Delay_from_due_date       12500 non-null  int64  
+#  9   Num_of_Delayed_Payment    12500 non-null  object 
+#  10  Changed_Credit_Limit      12500 non-null  object 
+#  11  Num_Credit_Inquiries      12500 non-null  float64
+#  12  Credit_Mix                12500 non-null  object 
+#  13  Outstanding_Debt          12500 non-null  object 
+#  14  Credit_Utilization_Ratio  12500 non-null  float64
+#  15  Credit_History_Age        12500 non-null  object 
+#  16  Payment_of_Min_Amount     12500 non-null  object 
+#  17  Total_EMI_per_month       12500 non-null  float64
+#  18  Amount_invested_monthly   12500 non-null  object 
+#  19  Payment_Behaviour         12500 non-null  object 
+#  20  Monthly_Balance           12500 non-null  object 
+#  21  snapshot_date             12500 non-null  object 
+
 
 def process_silver_financials(snapshot_date_str, bronze_features_dir, silver_features_dir, spark):
     bronze_file_path = os.path.join(bronze_features_dir, "financials", f"bronze_financials_{snapshot_date_str.replace('-', '_')}.csv")
