@@ -52,25 +52,6 @@ def process_silver_label(snapshot_date_str, bronze_lms_directory, silver_loan_da
 
 
 
-def _parse_credit_history_age_func(age_str):
-    if age_str is None:
-        return None
-    try:
-        years = 0
-        months = 0
-        year_match = re.search(r"(\d+)\s*Years?", str(age_str))
-        month_match = re.search(r"(\d+)\s*Months?", str(age_str))
-        if year_match:
-            years = int(year_match.group(1))
-        if month_match:
-            months = int(month_match.group(1))
-        return years * 12 + months
-    except Exception:
-        return None
-
-parse_credit_history_age_udf = F.udf(_parse_credit_history_age_func, IntegerType())
-
-
 def process_silver_attributes(snapshot_date_str, bronze_features_dir, silver_features_dir, spark):
     bronze_file_path = os.path.join(bronze_features_dir, "attributes", f"bronze_attributes_{snapshot_date_str.replace('-', '_')}.csv")
     silver_attributes_directory = os.path.join(silver_features_dir, "attributes")
@@ -80,18 +61,24 @@ def process_silver_attributes(snapshot_date_str, bronze_features_dir, silver_fea
     df = spark.read.csv(bronze_file_path, header=True, inferSchema=True)
     print(f'Loaded attributes from: {bronze_file_path}, row count: {df.count()}')
 
-    # -------- data-cleaning BEFORE casting --------
+    # -------------------------------
+    # Data Cleaning
+    # -------------------------------
     df = (
         df
-        # 1. Age: strip underscores, convert to int, drop impossible values
+        # 0. Customer_ID: ensure starts with 'CUS_'
+        .withColumn("Customer_ID", F.when(F.col("Customer_ID").startswith("CUS_"), F.col("Customer_ID"))
+                                      .otherwise(F.concat(F.lit("CUS_"), F.col("Customer_ID"))))
+        
+        # 1. Age: strip underscores, convert to int, drop values not in range 18 - 100
         .withColumn(
             "Age",
-            F.regexp_replace("Age", "_", "")          # get rid of underscores
-             .cast(IntegerType())                      # cast to int
+            F.regexp_replace("Age", "_", "")          
+             .cast(IntegerType())                      
         )
-        .filter((F.col("Age") >= 0) & (F.col("Age") <= 110))  # keep realistic ages
+        .filter((F.col("Age") >= 18) & (F.col("Age") <= 100))  
         
-        # 2. Occupation: map "_______" ➜ "Others" (case-insensitive, trim just in case)
+        # 2. Occupation: map "_______" ➜ "Others" 
         .withColumn(
             "Occupation",
             F.when(F.trim(F.lower("Occupation")) == "_______", "Others")
@@ -99,7 +86,10 @@ def process_silver_attributes(snapshot_date_str, bronze_features_dir, silver_fea
         )
     )
 
-    # Enforce schema / data type
+
+    # -------------------------------
+    # Data Type Casting
+    # -------------------------------
     df = df.withColumn("Customer_ID", F.col("Customer_ID").cast(StringType())) \
            .withColumn("Age", F.col("Age").cast(IntegerType())) \
            .withColumn("Occupation", F.col("Occupation").cast(StringType())) \
@@ -116,28 +106,28 @@ def process_silver_attributes(snapshot_date_str, bronze_features_dir, silver_fea
     return df
 
 
-# 0 Customer_ID               12500 non-null  object 
-#  1   Annual_Income             12500 non-null  object -> remove underscore
-#  2   Monthly_Inhand_Salary     12500 non-null  float64 
-#  3   Num_Bank_Accounts         12500 non-null  int64 -> remove high bank accounts, remove negative 
-#  4   Num_Credit_Card           12500 non-null  int64  -> remove high credit cards
-#  5   Interest_Rate             12500 non-null  int64  -> remove interest rate greater than 100
-#  6   Num_of_Loan               12500 non-null  object -> remove underscore, remove negative, remove high num of loan
-#  7   Type_of_Loan              11074 non-null  object -> 
-#  8   Delay_from_due_date       12500 non-null  int64  
-#  9   Num_of_Delayed_Payment    12500 non-null  object 
-#  10  Changed_Credit_Limit      12500 non-null  object 
-#  11  Num_Credit_Inquiries      12500 non-null  float64
-#  12  Credit_Mix                12500 non-null  object 
-#  13  Outstanding_Debt          12500 non-null  object 
-#  14  Credit_Utilization_Ratio  12500 non-null  float64
-#  15  Credit_History_Age        12500 non-null  object 
-#  16  Payment_of_Min_Amount     12500 non-null  object 
-#  17  Total_EMI_per_month       12500 non-null  float64
-#  18  Amount_invested_monthly   12500 non-null  object 
-#  19  Payment_Behaviour         12500 non-null  object 
-#  20  Monthly_Balance           12500 non-null  object 
-#  21  snapshot_date             12500 non-null  object 
+# 0 Customer_ID               12500 non-null  object -> Make sure every value begins with 'CUS_' (string)
+#  1   Annual_Income             12500 non-null  object -> remove underscore (float)
+#  2   Monthly_Inhand_Salary     12500 non-null  float64 -> remove negatives (float)
+#  3   Num_Bank_Accounts         12500 non-null  int64 -> remove remove negative (int)
+#  4   Num_Credit_Card           12500 non-null  int64  -> remove negative credit cards (int)
+#  5   Interest_Rate             12500 non-null  int64  -> Keep between 1 and 100 (float)
+#  6   Num_of_Loan               12500 non-null  object -> remove underscore, remove negative (float)
+#  7   Type_of_Loan              11074 non-null  object -> fill na with 'Unknown' (string) (categorical)
+#  8   Delay_from_due_date       12500 non-null  int64  -> keep between 0 to max value (remove negatives) (int)
+#  9   Num_of_Delayed_Payment    12500 non-null  object -> remove _, remove negatives (int), replace missing values with 0
+#  10  Changed_Credit_Limit      12500 non-null  object -> remove underscore (float), remove negative values
+#  11  Num_Credit_Inquiries      12500 non-null  float64 -> remove negatives (float)
+#  12  Credit_Mix                12500 non-null  object -> replace '_' with 'Unknown' (string) (categorical)
+#  13  Outstanding_Debt          12500 non-null  object -> remove underscore (float)
+#  14  Credit_Utilization_Ratio  12500 non-null  float64 -> keep between 0 and 100.0 (float)
+#  15  Credit_History_Age        12500 non-null  object -> its in the format of "X Years Y Months". Replace NA with 0 and just keep X years (dfMerged['Credit_History_Age'] = dfMerged['Credit_History_Age'].apply(lambda x: '0' if x == "NA" else str(x).split()[0]).astype(int)) (int)
+#  16  Payment_of_Min_Amount     12500 non-null  object -> (string) (categorical)
+#  17  Total_EMI_per_month       12500 non-null  float64 -> (float)
+#  18  Amount_invested_monthly   12500 non-null  object -> replace na with 0, remove underscores, there is a value like '__10000__' (float)
+#  19  Payment_Behaviour         12500 non-null  object -> replace('!@9#%8', 'Unknown'), (string) (categorical)
+#  20  Monthly_Balance           12500 non-null  object -> remove underscores, remove negative values (float)
+#  21  snapshot_date             12500 non-null  object -> (date)
 
 
 def process_silver_financials(snapshot_date_str, bronze_features_dir, silver_features_dir, spark):
@@ -149,45 +139,205 @@ def process_silver_financials(snapshot_date_str, bronze_features_dir, silver_fea
     df = spark.read.csv(bronze_file_path, header=True, inferSchema=True) # Keep inferSchema for now, cast explicitly
     print(f'Loaded financials from: {bronze_file_path}, row count: {df.count()}')
 
-    # Clean and cast columns
-    df = df.withColumn("snapshot_date", F.to_date(F.col("snapshot_date"), "yyyy-MM-dd")) \
-           .withColumn("Annual_Income", F.regexp_replace(F.col("Annual_Income"), "[^0-9.]", "").cast(FloatType())) \
-           .withColumn("Monthly_Inhand_Salary", F.col("Monthly_Inhand_Salary").cast(FloatType())) \
-           .withColumn("Num_Bank_Accounts", F.col("Num_Bank_Accounts").cast(IntegerType())) \
-           .withColumn("Num_Credit_Card", F.col("Num_Credit_Card").cast(IntegerType())) \
-           .withColumn("Interest_Rate", F.col("Interest_Rate").cast(IntegerType())) \
-           .withColumn("Num_of_Loan", F.regexp_replace(F.col("Num_of_Loan"), "[^0-9]", "").cast(IntegerType())) \
-           .withColumn("Delay_from_due_date", F.col("Delay_from_due_date").cast(IntegerType())) \
-           .withColumn("Num_of_Delayed_Payment", F.regexp_replace(F.col("Num_of_Delayed_Payment"), "[^0-9]", "").cast(IntegerType())) \
-           .withColumn("Changed_Credit_Limit", F.regexp_replace(F.col("Changed_Credit_Limit"), "_", "").cast(FloatType())) \
-           .withColumn("Num_Credit_Inquiries", F.col("Num_Credit_Inquiries").cast(IntegerType())) \
-           .withColumn("Credit_Mix", F.when(F.col("Credit_Mix") == "_", "Unknown").otherwise(F.col("Credit_Mix")).cast(StringType())) \
-           .withColumn("Outstanding_Debt", F.regexp_replace(F.col("Outstanding_Debt"), "[^0-9.]", "").cast(FloatType())) \
-           .withColumn("Credit_Utilization_Ratio", F.col("Credit_Utilization_Ratio").cast(FloatType())) \
-           .withColumn("Credit_History_Age_Months", parse_credit_history_age_udf(F.col("Credit_History_Age"))) \
-           .withColumn("Payment_of_Min_Amount", 
-                       F.when(F.col("Payment_of_Min_Amount") == "Yes", 1)
-                        .when(F.col("Payment_of_Min_Amount") == "No", 0)
-                        .otherwise(None).cast(IntegerType())) \
-           .withColumn("Total_EMI_per_month", F.col("Total_EMI_per_month").cast(FloatType())) \
-           .withColumn("Amount_invested_monthly", F.regexp_replace(F.col("Amount_invested_monthly"), "[^0-9.]", "").cast(FloatType())) \
-           .withColumn("Monthly_Balance", F.regexp_replace(F.col("Monthly_Balance"), "[^0-9.]", "").cast(FloatType()))
+    # -------------------------------
+    # Data Cleaning
+    # -------------------------------
 
-    # Select relevant columns, drop original complex string columns if parsed
-    df = df.select(
-        "Customer_ID", "snapshot_date", "Annual_Income", "Monthly_Inhand_Salary",
-        "Num_Bank_Accounts", "Num_Credit_Card", "Interest_Rate", "Num_of_Loan", "Type_of_Loan",
-        "Delay_from_due_date", "Num_of_Delayed_Payment", "Changed_Credit_Limit",
-        "Num_Credit_Inquiries", "Credit_Mix", "Outstanding_Debt", "Credit_Utilization_Ratio",
-        "Credit_History_Age_Months", "Payment_of_Min_Amount", "Total_EMI_per_month",
-        "Amount_invested_monthly", "Payment_Behaviour", "Monthly_Balance"
+    # df = (
+    #     df
+    #     # 0. Customer_ID: ensure starts with 'CUS_'
+    #     .withColumn("Customer_ID", F.when(F.col("Customer_ID").startswith("CUS_"), F.col("Customer_ID"))
+    #                                   .otherwise(F.concat(F.lit("CUS_"), F.col("Customer_ID"))))
+
+    #     # 1. Annual_Income: remove underscores
+    #     .withColumn("Annual_Income", F.regexp_replace("Annual_Income", "_", ""))
+
+    #     # 2. Monthly_Inhand_Salary: remove negatives
+    #     .withColumn("Monthly_Inhand_Salary", F.when(F.col("Monthly_Inhand_Salary") < 0, None)
+    #                                            .otherwise(F.col("Monthly_Inhand_Salary")))
+
+    #     # 3. Num_Bank_Accounts: remove negatives
+    #     .withColumn("Num_Bank_Accounts", F.when(F.col("Num_Bank_Accounts") < 0, None)
+    #                                        .otherwise(F.col("Num_Bank_Accounts")))
+
+    #     # 4. Num_Credit_Card: remove negatives
+    #     .withColumn("Num_Credit_Card", F.when(F.col("Num_Credit_Card") < 0, None)
+    #                                      .otherwise(F.col("Num_Credit_Card")))
+
+    #     # 5. Interest_Rate: keep between 1 and 100
+    #     .withColumn("Interest_Rate", F.when((F.col("Interest_Rate") >= 1) & (F.col("Interest_Rate") <= 100), F.col("Interest_Rate"))
+    #                                    .otherwise(None))
+
+    #     # 6. Num_of_Loan: remove underscores, remove negatives
+    #     .withColumn("Num_of_Loan", F.regexp_replace("Num_of_Loan", "_", "").cast(FloatType()))
+    #     .withColumn("Num_of_Loan", F.when(F.col("Num_of_Loan") < 0, None)
+    #                                  .otherwise(F.col("Num_of_Loan")))
+
+    #     # 7. Type_of_Loan: fill NA with 'Unknown'
+    #     .withColumn("Type_of_Loan", F.when(F.col("Type_of_Loan").isNull(), "Unknown")
+    #                                   .otherwise(F.col("Type_of_Loan")))
+
+    #     # 8. Delay_from_due_date: remove negatives
+    #     .withColumn("Delay_from_due_date", F.when(F.col("Delay_from_due_date") < 0, None)
+    #                                          .otherwise(F.col("Delay_from_due_date")))
+
+    #     # 9. Num_of_Delayed_Payment: remove_, remove negatives
+    #     .withColumn(
+    #             "Num_of_Delayed_Payment",
+    #             F.regexp_replace("Num_of_Delayed_Payment", "_", "")
+    #         ).withColumn(
+    #             "Num_of_Delayed_Payment",
+    #             F.when(F.col("Num_of_Delayed_Payment") < 0, 0).otherwise(F.col("Num_of_Delayed_Payment"))
+    #         )
+
+    #     # 10. Changed_Credit_Limit: remove underscores
+    #     .withColumn("Changed_Credit_Limit", F.regexp_replace("Changed_Credit_Limit", "_", ""))
+
+    #     # 11. Num_Credit_Inquiries: remove negatives
+    #     .withColumn("Num_Credit_Inquiries", F.when(F.col("Num_Credit_Inquiries") < 0, None)
+    #                                           .otherwise(F.col("Num_Credit_Inquiries")))
+
+    #     # 12. Credit_Mix: replace '_' with 'Unknown'
+    #     .withColumn("Credit_Mix", F.when(F.col("Credit_Mix") == "_", "Unknown")
+    #                                 .otherwise(F.col("Credit_Mix")))
+
+    #     # 13. Outstanding_Debt: remove underscores
+    #     .withColumn("Outstanding_Debt", F.regexp_replace("Outstanding_Debt", "_", ""))
+
+    #     # 14. Credit_Utilization_Ratio: keep between 0 and 100.0
+    #     .withColumn("Credit_Utilization_Ratio", F.when((F.col("Credit_Utilization_Ratio") >= 0) & (F.col("Credit_Utilization_Ratio") <= 100.0),
+    #                                                     F.col("Credit_Utilization_Ratio"))
+    #                                              .otherwise(None))
+
+    #     # 15. Credit_History_Age: "X Years Y Months" → extract X, replace NA with 0
+    #     .withColumn("Credit_History_Age", F.when(F.col("Credit_History_Age").isNull(), 0)
+    #                                        .otherwise(F.split(F.col("Credit_History_Age"), " ").getItem(0)))
+
+    #     # 18. Amount_invested_monthly: replace NA with 0, remove underscores
+    #     .withColumn("Amount_invested_monthly", F.when(F.col("Amount_invested_monthly").isNull(), 0)
+    #                                              .otherwise(F.col("Amount_invested_monthly")))
+    #     .withColumn("Amount_invested_monthly", F.regexp_replace("Amount_invested_monthly", "_", ""))
+
+    #     # 19. Payment_Behaviour: replace '!@9#%8' with 'Unknown'
+    #     .withColumn("Payment_Behaviour", F.when(F.col("Payment_Behaviour") == "!@9#%8", "Unknown")
+    #                                        .otherwise(F.col("Payment_Behaviour")))
+
+    #     # 20. Monthly_Balance: remove underscores, remove negatives
+    #     .withColumn("Monthly_Balance", F.regexp_replace("Monthly_Balance", "_", "").cast(FloatType()))
+    #     .withColumn("Monthly_Balance", F.when(F.col("Monthly_Balance") < 0, None)
+    #                                      .otherwise(F.col("Monthly_Balance")))
+    # )
+
+    df = (
+        df
+        # 0. Customer_ID: ensure starts with 'CUS_'
+        .withColumn("Customer_ID", F.when(F.col("Customer_ID").startswith("CUS_"), F.col("Customer_ID"))
+                                    .otherwise(F.concat(F.lit("CUS_"), F.col("Customer_ID"))))
+
+        # 1. Annual_Income: remove underscores
+        .withColumn("Annual_Income", F.regexp_replace("Annual_Income", "_", ""))
+
+        # 2. Monthly_Inhand_Salary: will be filtered later
+        # 3. Num_Bank_Accounts: will be filtered later
+        # 4. Num_Credit_Card: will be filtered later
+
+        # 5. Interest_Rate: keep between 1 and 100 (filter later)
+        
+        # 6. Num_of_Loan: remove underscores, filter later
+        .withColumn("Num_of_Loan", F.regexp_replace("Num_of_Loan", "_", "").cast(FloatType()))
+
+        # 7. Type_of_Loan: fill NA with 'Unknown'
+        .withColumn("Type_of_Loan", F.when(F.col("Type_of_Loan").isNull(), "Unknown")
+                                    .otherwise(F.col("Type_of_Loan")))
+
+        # 8. Delay_from_due_date: will be filtered later
+
+        # 9. Num_of_Delayed_Payment: remove underscore, cast to float for now
+        .withColumn("Num_of_Delayed_Payment", F.regexp_replace("Num_of_Delayed_Payment", "_", "").cast(FloatType()))
+
+        # 10. Changed_Credit_Limit: remove underscores, greater than 0
+        .withColumn("Changed_Credit_Limit", F.regexp_replace("Changed_Credit_Limit", "_", "").cast(FloatType()))
+
+        # 11. Num_Credit_Inquiries: will be filtered later
+
+        # 12. Credit_Mix: replace '_' with 'Unknown'
+        .withColumn("Credit_Mix", F.when(F.col("Credit_Mix") == "_", "Unknown")
+                                    .otherwise(F.col("Credit_Mix")))
+
+        # 13. Outstanding_Debt: remove underscores
+        .withColumn("Outstanding_Debt", F.regexp_replace("Outstanding_Debt", "_", ""))
+
+        # 14. Credit_Utilization_Ratio: filter later
+
+        # 15. Credit_History_Age: "X Years Y Months" → extract X, replace NA with 0
+        .withColumn("Credit_History_Age", F.when(F.col("Credit_History_Age").isNull(), 0)
+                                        .otherwise(F.split(F.col("Credit_History_Age"), " ").getItem(0)))
+
+        # 18. Amount_invested_monthly: replace NA with 0, remove underscores
+        .withColumn("Amount_invested_monthly", F.when(F.col("Amount_invested_monthly").isNull(), 0)
+                                                .otherwise(F.col("Amount_invested_monthly")))
+        .withColumn("Amount_invested_monthly", F.regexp_replace("Amount_invested_monthly", "_", ""))
+
+        # 19. Payment_Behaviour: replace '!@9#%8' with 'Unknown'
+        .withColumn("Payment_Behaviour", F.when(F.col("Payment_Behaviour") == "!@9#%8", "Unknown")
+                                        .otherwise(F.col("Payment_Behaviour")))
+
+        # 20. Monthly_Balance: remove underscores, cast to float
+        .withColumn("Monthly_Balance", F.regexp_replace("Monthly_Balance", "_", "").cast(FloatType()))
     )
+
+    # Apply .filter() to drop invalid customer data
+    df = (
+        df
+        .filter(F.col("Monthly_Inhand_Salary") >= 0)
+        .filter(F.col("Num_Bank_Accounts") >= 0)
+        .filter(F.col("Num_Credit_Card") >= 0)
+        .filter((F.col("Interest_Rate") >= 1) & (F.col("Interest_Rate") <= 100))
+        .filter(F.col("Num_of_Loan") >= 0)
+        .filter(F.col("Delay_from_due_date") >= 0)
+        .filter(F.col("Changed_Credit_Limit") > 0)
+        .filter(F.col("Num_of_Delayed_Payment") >= 0)
+        .filter(F.col("Num_Credit_Inquiries") >= 0)
+        .filter((F.col("Credit_Utilization_Ratio") >= 0) & (F.col("Credit_Utilization_Ratio") <= 100))
+        .filter(F.col("Monthly_Balance") >= 0)   
+    )
+
+    # -------------------------------
+    # Data Type Casting
+    # -------------------------------
+
+    df = (
+        df
+        .withColumn("Customer_ID", F.col("Customer_ID").cast(StringType()))
+        .withColumn("Annual_Income", F.col("Annual_Income").cast(FloatType()))
+        .withColumn("Monthly_Inhand_Salary", F.col("Monthly_Inhand_Salary").cast(FloatType()))
+        .withColumn("Num_Bank_Accounts", F.col("Num_Bank_Accounts").cast(IntegerType()))
+        .withColumn("Num_Credit_Card", F.col("Num_Credit_Card").cast(IntegerType()))
+        .withColumn("Interest_Rate", F.col("Interest_Rate").cast(FloatType()))
+        .withColumn("Num_of_Loan", F.col("Num_of_Loan").cast(FloatType()))
+        .withColumn("Type_of_Loan", F.col("Type_of_Loan").cast(StringType()))
+        .withColumn("Delay_from_due_date", F.col("Delay_from_due_date").cast(IntegerType()))
+        .withColumn("Num_of_Delayed_Payment", F.col("Num_of_Delayed_Payment").cast(IntegerType()))
+        .withColumn("Changed_Credit_Limit", F.col("Changed_Credit_Limit").cast(FloatType()))
+        .withColumn("Num_Credit_Inquiries", F.col("Num_Credit_Inquiries").cast(FloatType()))
+        .withColumn("Credit_Mix", F.col("Credit_Mix").cast(StringType()))
+        .withColumn("Outstanding_Debt", F.col("Outstanding_Debt").cast(FloatType()))
+        .withColumn("Credit_Utilization_Ratio", F.col("Credit_Utilization_Ratio").cast(FloatType()))
+        .withColumn("Credit_History_Age", F.col("Credit_History_Age").cast(IntegerType()))
+        .withColumn("Payment_of_Min_Amount", F.col("Payment_of_Min_Amount").cast(StringType()))
+        .withColumn("Total_EMI_per_month", F.col("Total_EMI_per_month").cast(FloatType()))
+        .withColumn("Amount_invested_monthly", F.col("Amount_invested_monthly").cast(FloatType()))
+        .withColumn("Payment_Behaviour", F.col("Payment_Behaviour").cast(StringType()))
+        .withColumn("Monthly_Balance", F.col("Monthly_Balance").cast(FloatType()))
+        .withColumn("snapshot_date", F.to_date("snapshot_date", "yyyy-MM-dd"))
+    )
+
     
-    # save silver table
+    # Save silver table
     partition_name = f"silver_financials_{snapshot_date_str.replace('-', '_')}.parquet"
     filepath = os.path.join(silver_financials_directory, partition_name)
     df.write.mode("overwrite").parquet(filepath)
-    print(f'Saved silver financials to: {filepath}')
+    print(f'Saved silver financials to: {filepath}, row count: {df.count()}')
     return df
 
 
@@ -202,20 +352,35 @@ def process_silver_clickstream(snapshot_date_str, bronze_features_dir, silver_fe
     df = spark.read.csv(bronze_file_path, header=True, inferSchema=True)
     print(f'Loaded clickstream from: {bronze_file_path}, row count: {df.count()}')
 
-    # Ensure snapshot_date is DateType
-    df = df.withColumn("snapshot_date", F.to_date(F.col("snapshot_date"), "yyyy-MM-dd"))
+    # -------------------------------
+    # Data Cleaning
+    # -------------------------------
 
-    # Cast all fe_X columns to IntegerType just to be sure, though inferSchema might get them right
+    df = ( 
+        df
+        # 0. Customer_ID: ensure starts with 'CUS_'
+        .withColumn("Customer_ID", F.when(F.col("Customer_ID").startswith("CUS_"), F.col("Customer_ID"))
+                                      .otherwise(F.concat(F.lit("CUS_"), F.col("Customer_ID"))))
+    )
+
+    # -------------------------------
+    # Data Type Casting
+    # -------------------------------
+
+    # Cast all fe_X columns to IntegerType
     for i in range(1, 21):
         col_name = f"fe_{i}"
         if col_name in df.columns:
             df = df.withColumn(col_name, F.col(col_name).cast(IntegerType()))
     
+    
     df = df.withColumn("Customer_ID", F.col("Customer_ID").cast(StringType()))
+    df = df.withColumn("snapshot_date", F.to_date(F.col("snapshot_date"), "yyyy-MM-dd"))
 
-    # save silver table
+    
+    # Save silver table
     partition_name = f"silver_clickstream_{snapshot_date_str.replace('-', '_')}.parquet"
     filepath = os.path.join(silver_clickstream_directory, partition_name)
     df.write.mode("overwrite").parquet(filepath)
-    print(f'Saved silver clickstream to: {filepath}')
+    print(f'Saved silver clickstream to: {filepath}, row count: {df.count()}')
     return df

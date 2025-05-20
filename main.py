@@ -1,20 +1,9 @@
-# main.py
 import os
 import glob
 import pandas as pd
-# import matplotlib.pyplot as plt # Not used in this script version
-# import numpy as np # Not used in this script version
-# import random # Not used in this script version
 from datetime import datetime, timedelta
-# from dateutil.relativedelta import relativedelta # Not used directly in this script version
-# import pprint # Not used in this script version
 import pyspark
-# import pyspark.sql.functions as F # Not used directly in this script version
 
-# from pyspark.sql.functions import col # Not used directly in this script version
-# from pyspark.sql.types import StringType, IntegerType, FloatType, DateType # Not used directly
-
-# Import your utility modules
 import utils.data_processing_bronze_table
 import utils.data_processing_silver_table
 import utils.data_processing_gold_table
@@ -31,8 +20,8 @@ spark = pyspark.sql.SparkSession.builder \
 spark.sparkContext.setLogLevel("ERROR")
 
 # set up config
-start_date_str = "2023-01-01" # Use a smaller range for testing if needed
-end_date_str = "2023-03-01" # Process a few months for demonstration
+start_date_str = "2023-01-01" 
+end_date_str = "2024-12-01" 
 
 # generate list of dates to process
 def generate_first_of_month_dates(start_date_str, end_date_str):

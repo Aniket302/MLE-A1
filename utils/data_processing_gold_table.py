@@ -7,9 +7,6 @@ from pyspark.sql.types import StringType, IntegerType, FloatType, DateType
 
 def process_labels_gold_table(snapshot_date_str, silver_loan_daily_directory, gold_label_store_directory, spark, dpd, mob):
     
-    # prepare arguments
-    snapshot_date = datetime.strptime(snapshot_date_str, "%Y-%m-%d")
-    
     # connect to bronze table
     partition_name = "silver_loan_daily_" + snapshot_date_str.replace('-','_') + '.parquet'
     filepath = silver_loan_daily_directory + partition_name
@@ -66,12 +63,10 @@ def process_feature_store_gold_table(snapshot_date_str, silver_features_dir, gol
     # Start with attributes, then left join financials and clickstream
     # This ensures all customers from attributes are present. If a customer is not in financials or clickstream for that snapshot, their feature values will be null.
     # This seems more robust than inner join.
+
     
-    df_gold = df_attributes.join(df_financials, join_condition, "left") \
-                           .join(df_clickstream, join_condition, "left")
-    
-    # Add a feature_store_snapshot_date for clarity if needed, or rely on the existing snapshot_date
-    df_gold = df_gold.withColumn("feature_snapshot_date", F.col("snapshot_date"))
+    df_gold = df_clickstream.join(df_financials, join_condition, "inner") \
+                           .join(df_attributes, join_condition, "inner")
 
     # Select final columns. Be careful about duplicate column names if any (e.g. Customer_ID, snapshot_date will be unique after join).
     # The join_condition keys will appear once. All other columns from joined tables will be present.
